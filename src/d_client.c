@@ -378,7 +378,7 @@ void D_InitNetGame (void)
 
     do
     {
-      do { 
+      do {
 	// Send init packet
 	initpacket.pn = doom_htons(wanted_player_number);
 	packet_set(&initpacket.head, PKT_INIT, 0);
@@ -511,71 +511,54 @@ void D_InitNetGame (void)
   consoleplayer = displayplayer = doomcom->consoleplayer;
 }
 
-#if 0
 void D_BuildNewTiccmds(void)
 {
-    static int lastmadetic;
-    int newtics = I_GetTime() - lastmadetic;
-    lastmadetic += newtics;
-    while (newtics--)
-    {
-      I_StartTic();
-      if (maketic - gametic > BACKUPTICS/2) break;
-      G_BuildTiccmd(&localcmds[maketic%BACKUPTICS]);
-      maketic++;
-    }
-}
-#else
-void D_BuildNewTiccmds(void)
-{
-   I_StartTic();
-   G_BuildTiccmd(&localcmds[maketic % BACKUPTICS]);
-   maketic++;
-}
-#endif
+  I_StartTic();
 
-#if 0
-void TryRunTics (void)
-{
-  int runtics;
-
-  // Wait for tics to run
-  while (1) {
-    D_BuildNewTiccmds();
-    runtics = maketic - gametic;
-    if (runtics)
-      break;
-
-        WasRenderedInTryRunTics = TRUE;
-        if (movement_smooth && gamestate==wipegamestate)
-        {
-          isExtraDDisplay = TRUE;
-          D_Display();
-          isExtraDDisplay = FALSE;
-        }
+  if (maketic <= gametic)
+  {
+	 // Create new ticcmds if running behind
+	 G_BuildTiccmd(&localcmds[maketic % BACKUPTICS]);
+	 maketic++;
   }
+  else
+  {
+	 // Update latest ticcmd if running ahead
+	 ticcmd_t prevcmd = localcmds[(maketic-1) % BACKUPTICS];
+	 ticcmd_t *cmd = &localcmds[(maketic-1) % BACKUPTICS];
 
-  if (advancedemo)
-	  D_DoAdvanceDemo ();
-  M_Ticker ();
-  I_GetTime_SaveMS();
-  G_Ticker ();
-  P_Checksum(gametic);
-  gametic++;
+	 G_BuildTiccmd(cmd);
+	 cmd->angleturn += prevcmd.angleturn;
+	 cmd->buttons |= prevcmd.buttons;
+  }
 }
-#endif
 
 void TryRunTics(void)
 {
-  while (maketic <= gametic)
-     D_BuildNewTiccmds();
+  fixed_t overflow = 0;
+  tic_vars.frac += tic_vars.frac_step;
+  if(tic_vars.frac > FRACUNIT) {
+    overflow = tic_vars.frac - FRACUNIT;
+    tic_vars.frac = FRACUNIT;
+  }
 
-  if (advancedemo)
-     D_DoAdvanceDemo ();
-  M_Ticker ();
-  G_Ticker ();
-  P_Checksum(gametic);
-  gametic++;
+  D_BuildNewTiccmds();
+
+  if (movement_smooth && gamestate==wipegamestate) {
+    WasRenderedInTryRunTics = TRUE;
+    D_Display();
+  }
+
+  if(tic_vars.frac == FRACUNIT) {
+    tic_vars.frac = overflow;
+    if (advancedemo)
+      D_DoAdvanceDemo ();
+    M_Ticker ();
+    G_Ticker ();
+    P_Checksum(gametic);
+    gametic++;
+  }
+
 }
 
 #endif

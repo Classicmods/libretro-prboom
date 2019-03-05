@@ -26,8 +26,11 @@
 #include "../src/st_stuff.h"
 #include "../src/w_wad.h"
 #include "../src/r_draw.h"
+#include "../src/r_fps.h"
 #include "../src/lprintf.h"
 #include "../src/doomstat.h"
+#include "../src/m_cheat.h"
+#include "../src/g_game.h"
 
 void I_MPPlayer_Init(void);
 void I_MPPlayer_Free(void);
@@ -77,7 +80,7 @@ boolean find_recursive_on;
 // This is scaled by in-game 'mouse sensitivity' option, so just choose a value
 // that has acceptable performance at the default sensitivity value
 // (i.e. user can easily change mouse speed, so absolute value here is not critical)
-#define ANALOG_MOUSE_SPEED 200
+#define ANALOG_MOUSE_SPEED 128
 // Default deadzone: 15%
 static int analog_deadzone = (int)(0.15f * ANALOG_RANGE);
 
@@ -87,23 +90,18 @@ static int analog_deadzone = (int)(0.15f * ANALOG_RANGE);
 // (number of gamepad buttons) + 1
 #define MAX_BUTTON_BINDS 17
 
-// menu enter and back buttons
-boolean menu_enter_a;
-boolean menu_enter_b;
-boolean menu_enter_x;
-boolean menu_enter_y;
-boolean menu_back_a;
-boolean menu_back_b;
-boolean menu_back_x;
-boolean menu_back_y;
+typedef struct {
+	int* gamekey;
+	int* menukey;
+} action_lut_t;
 
 typedef struct {
 	struct retro_input_descriptor desc[MAX_BUTTON_BINDS];
-	int action_lut[MAX_BUTTON_BINDS];
+	action_lut_t action_lut[MAX_BUTTON_BINDS];
 	unsigned num_buttons;
 } gamepad_layout_t;
 
-static gamepad_layout_t gp_classic = {
+static gamepad_layout_t gp_classic = { // Based on PS1 Doom Port!
 	{
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
@@ -123,64 +121,64 @@ static gamepad_layout_t gp_classic = {
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Show/Hide Menu" },
 		{ 0 },
 	},
-	{
-		KEYD_RALT,       // RETRO_DEVICE_ID_JOYPAD_B      - Strafe
-		KEYD_RSHIFT,     // RETRO DEVICE_ID_JOYPAD_Y      - Run
-		KEYD_TAB,        // RETRO_DEVICE_ID_JOYPAD_SELECT - Show/Hide Map
-		KEYD_ESCAPE,     // RETRO_DEVICE_ID_JOYPAD_START  - Show/Hide Menu
-		KEYD_UPARROW,    // RETRO_DEVICE_ID_JOYPAD_UP     - D-Pad Up
-		KEYD_DOWNARROW,  // RETRO_DEVICE_ID_JOYPAD_DOWN   - D-Pad Down
-		KEYD_LEFTARROW,  // RETRO_DEVICE_ID_JOYPAD_LEFT   - D-Pad Left
-		KEYD_RIGHTARROW, // RETRO_DEVICE_ID_JOYPAD_RIGHT  - D-Pad Right
-		KEYD_SPACEBAR,   // RETRO_DEVICE_ID_JOYPAD_A      - Use
-		KEYD_RCTRL,      // RETRO_DEVICE_ID_JOYPAD_X      - Fire
-		',',             // RETRO_DEVICE_ID_JOYPAD_L1     - Strafe Left
-		'.',             // RETRO_DEVICE_ID_JOYPAD_R1     - Strafe Right
-		'n',             // RETRO_DEVICE_ID_JOYPAD_L2     - Previous Weapon
-		'm',             // RETRO_DEVICE_ID_JOYPAD_R2     - Next Weapon
-		KEYD_CAPSLOCK,   // RETRO_DEVICE_ID_JOYPAD_L3     - Toggle Run - added in case anyone want to use toggle run instead of press to run with classic layout
-		'/',             // RETRO_DEVICE_ID_JOYPAD_R3     - 180 Turn - added in case anyone want it in classic layout
+	{	// gamekey,             menukey
+		{ &key_strafe,          &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_B
+		{ &key_speed,           &key_menu_backspace }, // RETRO DEVICE_ID_JOYPAD_Y
+		{ &key_map,             &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_SELECT
+		{ &key_menu_escape,     &key_menu_escape },    // RETRO_DEVICE_ID_JOYPAD_START
+		{ &key_up,              &key_menu_up },        // RETRO_DEVICE_ID_JOYPAD_UP
+		{ &key_down,            &key_menu_down },      // RETRO_DEVICE_ID_JOYPAD_DOWN
+		{ &key_left,            &key_menu_left },      // RETRO_DEVICE_ID_JOYPAD_LEFT
+		{ &key_right,           &key_menu_right },     // RETRO_DEVICE_ID_JOYPAD_RIGHT
+		{ &key_use,             &key_menu_enter },     // RETRO_DEVICE_ID_JOYPAD_A
+		{ &key_fire,            &key_menu_enter },     // RETRO_DEVICE_ID_JOYPAD_X
+		{ &key_strafeleft,      &key_menu_left },      // RETRO_DEVICE_ID_JOYPAD_L1
+		{ &key_straferight,     &key_menu_right },     // RETRO_DEVICE_ID_JOYPAD_R1
+		{ &key_weaponcycledown, &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_L2
+		{ &key_weaponcycleup,   &key_menu_enter },     // RETRO_DEVICE_ID_JOYPAD_R2
+		{ &key_autorun,         &key_menu_enter },     // RETRO_DEVICE_ID_JOYPAD_L3
+		{ &key_reverse,         &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_R3
 	},
 	16,
 };
 
-static gamepad_layout_t gp_modern = {
+static gamepad_layout_t gp_modern = { // Based on Original XBOX Doom 3 Collection
 	{
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "D-Pad Right" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "Use" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "Show Last Message" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "Next Weapon" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "Previous Weapon" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "Show/Hide Map" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "Run" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "Fire" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,     "Quick Save" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,     "Quick Load" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "Use" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "Quick Load" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "Quick Save" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,     "Run" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,     "Fire" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,     "Toggle Run" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,     "180 Turn" },
-		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Show Last Message" },
+		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Show/Hide Map" },
 		{ 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Show/Hide Menu" },
 		{ 0 },
 	},
-	{ // changed to match with doom classic on ps3
-		KEYD_SPACEBAR,   // RETRO_DEVICE_ID_JOYPAD_B      - Use
-		KEYD_TAB,        // RETRO DEVICE_ID_JOYPAD_Y      - Show/Hide Map
-		KEYD_ENTER,      // RETRO_DEVICE_ID_JOYPAD_SELECT - Show Last Message
-		KEYD_ESCAPE,     // RETRO_DEVICE_ID_JOYPAD_START  - Show/Hide Menu
-		KEYD_UPARROW,    // RETRO_DEVICE_ID_JOYPAD_UP     - D-Pad Up
-		KEYD_DOWNARROW,  // RETRO_DEVICE_ID_JOYPAD_DOWN   - D-Pad Down
-		KEYD_LEFTARROW,  // RETRO_DEVICE_ID_JOYPAD_LEFT   - D-Pad Left
-		KEYD_RIGHTARROW, // RETRO_DEVICE_ID_JOYPAD_RIGHT  - D-Pad Right
-		'm',             // RETRO_DEVICE_ID_JOYPAD_A      - Next Weapon
-		'n',             // RETRO_DEVICE_ID_JOYPAD_X      - Previous Weapon
-		KEYD_RSHIFT,     // RETRO_DEVICE_ID_JOYPAD_L1     - Run
-		KEYD_RCTRL,      // RETRO_DEVICE_ID_JOYPAD_R1     - Fire
-		KEYD_F6,         // RETRO_DEVICE_ID_JOYPAD_L2     - Quick Save
-		KEYD_F9,         // RETRO_DEVICE_ID_JOYPAD_R2     - Quick Load
-		KEYD_CAPSLOCK,   // RETRO_DEVICE_ID_JOYPAD_L3     - Toggle Run
-		'/',             // RETRO_DEVICE_ID_JOYPAD_R3     - 180 Turn
+	{	// gamekey,             menukey
+		{ &key_enter,           &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_B
+		{ &key_use,             &key_menu_enter },     // RETRO DEVICE_ID_JOYPAD_Y
+		{ &key_map,             &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_SELECT
+		{ &key_menu_escape,     &key_menu_escape },    // RETRO_DEVICE_ID_JOYPAD_START
+		{ &key_map_up,          &key_menu_up },        // RETRO_DEVICE_ID_JOYPAD_UP
+		{ &key_map_down,        &key_menu_down },      // RETRO_DEVICE_ID_JOYPAD_DOWN
+		{ &key_map_left,        &key_menu_left },      // RETRO_DEVICE_ID_JOYPAD_LEFT
+		{ &key_map_right,       &key_menu_right },     // RETRO_DEVICE_ID_JOYPAD_RIGHT
+		{ &key_weaponcycleup,   &key_menu_enter },     // RETRO_DEVICE_ID_JOYPAD_A
+		{ &key_weaponcycledown, &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_X
+		{ &key_quickload,       &key_menu_left },      // RETRO_DEVICE_ID_JOYPAD_L1
+		{ &key_quicksave,       &key_menu_right },     // RETRO_DEVICE_ID_JOYPAD_R1
+		{ &key_speed,           &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_L2
+		{ &key_fire,            &key_menu_enter },     // RETRO_DEVICE_ID_JOYPAD_R2
+		{ &key_autorun,         &key_menu_enter },     // RETRO_DEVICE_ID_JOYPAD_L3
+		{ &key_reverse,         &key_menu_backspace }, // RETRO_DEVICE_ID_JOYPAD_R3
 	},
 	16,
 };
@@ -238,13 +236,54 @@ void retro_get_system_info(struct retro_system_info *info)
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
 {
-   info->timing.fps = 60.0;
-   info->timing.sample_rate = 44100.0;
-   info->geometry.base_width = SCREENWIDTH;
-   info->geometry.base_height = SCREENHEIGHT;
-   info->geometry.max_width = SCREENWIDTH;
-   info->geometry.max_height = SCREENHEIGHT;
-   info->geometry.aspect_ratio = 4.0 / 3.0;
+  switch(movement_smooth)
+  {
+    case 0:
+      info->timing.fps = 35.0;
+      break;
+    case 1:
+      info->timing.fps = 40.0;
+      break;
+    case 2:
+      info->timing.fps = 50.0;
+      break;
+    case 3:
+      info->timing.fps = 60.0;
+      break;
+    case 4:
+      info->timing.fps = 70.0;
+      break;
+    case 5:
+      info->timing.fps = 72.0;
+      break;
+    case 6:
+      info->timing.fps = 75.0;
+      break;
+    case 7:
+      info->timing.fps = 100.0;
+      break;
+    case 8:
+      info->timing.fps = 119.0;
+      break;
+    case 9:
+      info->timing.fps = 120.0;
+      break;
+    case 10:
+      info->timing.fps = 140.0;
+      break;
+    case 11:
+      info->timing.fps = 144.0;
+      break;
+    default:
+      info->timing.fps = TICRATE;
+      break;
+  }
+  info->timing.sample_rate = 44100.0;
+  info->geometry.base_width = SCREENWIDTH;
+  info->geometry.base_height = SCREENHEIGHT;
+  info->geometry.max_width = SCREENWIDTH;
+  info->geometry.max_height = SCREENHEIGHT;
+  info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 
 
@@ -252,29 +291,27 @@ void retro_set_environment(retro_environment_t cb)
 {
 	struct retro_variable variables[] = {
 		{ "prboom-resolution",
-			"Internal resolution (restart); 320x200|640x400|960x600|1280x800|1600x1000|1920x1200" },
+			"Internal resolution (restart); 320x200|640x400|960x600|1280x800|1600x1000|1920x1200|2240x1400|2560x1600" },
 		{ "prboom-mouse_on", "Mouse active when using Gamepad; disabled|enabled" },
 		{ "prboom-find_recursive_on", "Look on parent folders for IWADs; enabled|disabled" },
 		{ "prboom-analog_deadzone", "Analog Deadzone (percent); 15|20|25|30|0|5|10" },
-        { "prboom-menu_enter_button", "Menu enter button; B|X|Y|A" }, // menu enter as core option to be able to map it independently of in-game mappings
-        { "prboom-menu_back_button", "Menu back button; A|B|X|Y" }, // menu back as core option to be able to map it independently of in-game mappings
 		{ NULL, NULL },
 	};
-	
+
    static const struct retro_controller_description port[] = {
 		{ "Gamepad Modern", RETROPAD_MODERN },
 		{ "Gamepad Classic", RETROPAD_CLASSIC },
 		{ "RetroKeyboard/Mouse", RETRO_DEVICE_KEYBOARD },
 		{ 0 },
    };
-	
+
 	static const struct retro_controller_info ports[] = {
 		{ port, 3 },
 		{ NULL, 0 },
 	};
-	
+
 	environ_cb = cb;
-	
+
 	cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
 	cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
 }
@@ -283,7 +320,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
 {
 	if (port)
 		return;
-	
+
 	switch (device)
 	{
 		case RETROPAD_CLASSIC:
@@ -392,81 +429,12 @@ static void update_variables(bool startup)
       else
          find_recursive_on = false;
    }
-   
+
    var.key = "prboom-analog_deadzone";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
 		analog_deadzone = (int)(atoi(var.value) * 0.01f * ANALOG_RANGE);
-   }
-
-// get menu buttons core option values
-   var.key = "prboom-menu_enter_button";
-   var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      if (!strcmp(var.value, "A"))
-         {
-         menu_enter_a = true;
-         menu_enter_b = false;
-         menu_enter_x = false;
-         menu_enter_y = false;
-         }
-      else if (!strcmp(var.value, "B"))
-         {
-         menu_enter_a = false;
-         menu_enter_b = true;
-         menu_enter_x = false;
-         menu_enter_y = false;
-         }
-      else if (!strcmp(var.value, "X"))
-         {
-         menu_enter_a = false;
-         menu_enter_b = false;
-         menu_enter_x = true;
-         menu_enter_y = false;
-         }
-      else if (!strcmp(var.value, "Y"))
-         {
-         menu_enter_a = false;
-         menu_enter_b = false;
-         menu_enter_x = false;
-         menu_enter_y = true;
-         }
-    }
-
-   var.key = "prboom-menu_back_button";
-   var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      if (!strcmp(var.value, "A"))
-         {
-         menu_back_a = true;
-         menu_back_b = false;
-         menu_back_x = false;
-         menu_back_y = false;
-         }
-      else if (!strcmp(var.value, "B"))
-         {
-         menu_back_a = false;
-         menu_back_b = true;
-         menu_back_x = false;
-         menu_back_y = false;
-         }
-      else if (!strcmp(var.value, "X"))
-         {
-         menu_back_a = false;
-         menu_back_b = false;
-         menu_back_x = true;
-         menu_back_y = false;
-         }
-      else if (!strcmp(var.value, "Y"))
-         {
-         menu_back_a = false;
-         menu_back_b = false;
-         menu_back_x = false;
-         menu_back_y = true;
-         }
    }
 }
 
@@ -601,7 +569,7 @@ bool retro_load_game(const struct retro_game_info *info)
            argv[argc++] = "-deh";
            argv[argc++] = deh;
       };
-      
+
       // Get save directory
       if (environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &base_save_dir) && base_save_dir)
 		{
@@ -610,7 +578,7 @@ bool retro_load_game(const struct retro_game_info *info)
 				// > Build save path
 				snprintf(g_save_dir, sizeof(g_save_dir), "%s%c%s", base_save_dir, DIR_SLASH, name_without_ext);
 				use_external_savedir = true;
-				
+
 				// > Create save directory, if required
 				if (!path_is_directory(g_save_dir))
 				{
@@ -711,41 +679,26 @@ void retro_cheat_reset(void)
 
 void retro_cheat_set(unsigned index, bool enabled, const char *code)
 {
-   (void)index;
-   (void)enabled;
-   (void)code;
+   int i;
+   (void)index;(void)enabled;
+   if(code)
+      for (i=0; code[i] != '\0'; i++)
+         M_FindCheats(code[i]);
 }
 
-/* i_video */
-
-// ensure that only the essential keys are mapped on the menu to avoid unwanted key presses
-static int menu_lut[] = {
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_B */
-   ' ',               /* RETRO DEVICE_ID_JOYPAD_Y */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_SELECT */
-   KEYD_ESCAPE,       /* RETRO_DEVICE_ID_JOYPAD_START */
-   KEYD_UPARROW,      /* RETRO_DEVICE_ID_JOYPAD_UP */
-   KEYD_DOWNARROW,    /* RETRO_DEVICE_ID_JOYPAD_DOWN */
-   KEYD_LEFTARROW,    /* RETRO_DEVICE_ID_JOYPAD_LEFT */
-   KEYD_RIGHTARROW,   /* RETRO_DEVICE_ID_JOYPAD_RIGHT */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_A */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_X */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_L1 */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_R1 */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_L2 */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_R2 */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_L3 */
-   ' ',               /* RETRO_DEVICE_ID_JOYPAD_R3 */
+static action_lut_t left_analog_lut[] = {
+   { &key_straferight, &key_menu_right }, /* RETRO_DEVICE_INDEX_ANALOG_LEFT +X */
+   { &key_strafeleft,  &key_menu_left },  /* RETRO_DEVICE_INDEX_ANALOG_LEFT -X */
+   { &key_down,        &key_menu_down },  /* RETRO_DEVICE_INDEX_ANALOG_LEFT +Y */
+   { &key_up,          &key_menu_up },    /* RETRO_DEVICE_INDEX_ANALOG_LEFT -Y */
 };
 
-static int left_analog_lut[] = {
-   '.',               /* RETRO_DEVICE_INDEX_ANALOG_LEFT +X */
-   ',',               /* RETRO_DEVICE_INDEX_ANALOG_LEFT -X */
-   KEYD_DOWNARROW,    /* RETRO_DEVICE_INDEX_ANALOG_LEFT +Y */
-   KEYD_UPARROW       /* RETRO_DEVICE_INDEX_ANALOG_LEFT -Y */
+static action_lut_t mw_lut[] = {
+   { &key_weaponcycleup,   &key_menu_up },   /* RETRO_DEVICE_ID_MOUSE_WHEELUP */
+   { &key_weaponcycledown, &key_menu_down }, /* RETRO_DEVICE_ID_MOUSE_WHEELDOWN */
 };
 
-static int action_kb_lut[117][2] = {
+static int keyboard_lut[117][2] = {
    {RETROK_BACKSPACE      ,KEYD_BACKSPACE},
    {RETROK_TAB            ,KEYD_TAB},
    {RETROK_CLEAR          ,},
@@ -869,11 +822,6 @@ static int action_kb_lut[117][2] = {
    {RETROK_LALT           ,KEYD_LALT}
 };
 
-static int mw_lut[] = {
-   'm',               /* RETRO_DEVICE_ID_MOUSE_WHEELUP */
-   'n'                /* RETRO_DEVICE_ID_MOUSE_WHEELDOWN */
-};
-
 // Produces a pulse train with average on-time fraction amplitude/pwm_period.
 // (https://www.embeddedrelated.com/showarticle/107.php)
 // > The period here doesn't actually matter that much...
@@ -889,16 +837,12 @@ static bool synthetic_pwm(int amplitude, int* modulation_state)
 	return true;
 }
 
-static void process_gamepad_buttons(unsigned num_buttons, int action_lut[])
+static void process_gamepad_buttons(unsigned num_buttons, action_lut_t action_lut[])
 {
 	unsigned i;
 	static bool old_input[MAX_BUTTON_BINDS];
 	bool new_input[MAX_BUTTON_BINDS];
-    bool retro_joypad_a = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A); // shortcuts for later
-    bool retro_joypad_b = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
-    bool retro_joypad_x = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X);
-    bool retro_joypad_y = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y);
-	
+
 	for(i = 0; i < num_buttons; i++)
 	{
 		event_t event = {0};
@@ -907,32 +851,18 @@ static void process_gamepad_buttons(unsigned num_buttons, int action_lut[])
 		if(new_input[i] && !old_input[i])
 		{
 			event.type = ev_keydown;
-			if (menuactive && ((menu_enter_a && retro_joypad_a) || (menu_enter_b && retro_joypad_b) || (menu_enter_x && retro_joypad_x) || (menu_enter_y && retro_joypad_y)))
-				event.data1 = KEYD_ENTER; // press enter only in menus and according to menu enter button core option
-			else if (menuactive && ((menu_back_a && retro_joypad_a) || (menu_back_b && retro_joypad_b) || (menu_back_x && retro_joypad_x) || (menu_back_y && retro_joypad_y)))
-				event.data1 = KEYD_BACKSPACE; // press backspace only in menus and according to menu back button core option
-			else if (menuactive)
-				event.data1 = menu_lut[i]; // use menu_lut only in menus
-			else
-				event.data1 = action_lut[i];
+			event.data1 = *((menuactive)? action_lut[i].menukey : action_lut[i].gamekey);
 		}
-		
+
 		if(!new_input[i] && old_input[i])
 		{
 			event.type = ev_keyup;
-			if (menuactive)
-			{
-				event.data1 = KEYD_ENTER; //depress menu keys
-				event.data1 = KEYD_BACKSPACE;
-				event.data1 = menu_lut[i];
-			}
-			else
-				event.data1 = action_lut[i];
+			event.data1 = *((menuactive)? action_lut[i].menukey : action_lut[i].gamekey);
 		}
-		
+
 		if(event.type == ev_keydown || event.type == ev_keyup)
 			D_PostEvent(&event);
-		
+
 		old_input[i] = new_input[i];
 	}
 }
@@ -941,13 +871,19 @@ static void process_gamepad_left_analog(void)
 {
 	unsigned i;
 	static bool old_input_analog_l[4];
-   bool new_input_analog_l[4];
-   int analog_l_amplitude[4];
-   static int analog_l_modulation_state[4];
-	
-	int lsx = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
-	int lsy = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
-	
+	bool new_input_analog_l[4];
+	int analog_l_amplitude[4];
+	static int analog_l_modulation_state[4];
+	int lsx, lsy, analog_range;
+
+	// Only run once per game tic
+	if(tic_vars.frac < FRACUNIT) return;
+	// Increase range on menu
+	analog_range = (menuactive)? ANALOG_RANGE*8 : ANALOG_RANGE;
+
+	lsx = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+	lsy = input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+
 	// Get movement 'amplitude' on each axis
 	// > x-axis
 	analog_l_amplitude[0] = 0;
@@ -956,45 +892,45 @@ static void process_gamepad_left_analog(void)
 	{
 		// Add '1' to deal with float->int rounding accuracy loss...
 		// (Similarly, subtract '1' when lsx is negative...)
-		analog_l_amplitude[0] = 1 + pwm_period * (lsx - analog_deadzone) / (ANALOG_RANGE - analog_deadzone);
+		analog_l_amplitude[0] = 1 + pwm_period * (lsx - analog_deadzone) / (analog_range - analog_deadzone);
 	}
 	if (lsx < -analog_deadzone)
 	{
-		analog_l_amplitude[1] = -1 * (-1 + pwm_period * (lsx + analog_deadzone) / (ANALOG_RANGE - analog_deadzone));
+		analog_l_amplitude[1] = -1 * (-1 + pwm_period * (lsx + analog_deadzone) / (analog_range - analog_deadzone));
 	}
 	// > y-axis
 	analog_l_amplitude[2] = 0;
 	analog_l_amplitude[3] = 0;
 	if (lsy > analog_deadzone)
 	{
-		analog_l_amplitude[2] = 1 + pwm_period * (lsy - analog_deadzone) / (ANALOG_RANGE - analog_deadzone);
+		analog_l_amplitude[2] = 1 + pwm_period * (lsy - analog_deadzone) / (analog_range - analog_deadzone);
 	}
 	if (lsy < -analog_deadzone)
 	{
-		analog_l_amplitude[3] = -1 * (-1 + pwm_period * (lsy + analog_deadzone) / (ANALOG_RANGE - analog_deadzone));
+		analog_l_amplitude[3] = -1 * (-1 + pwm_period * (lsy + analog_deadzone) / (analog_range - analog_deadzone));
 	}
-	
+
 	for (i = 0; i < 4; i++)
 	{
 		event_t event = {0};
-		
+
 		new_input_analog_l[i] = synthetic_pwm(analog_l_amplitude[i], &analog_l_modulation_state[i]);
-		
+
 		if(new_input_analog_l[i] && !old_input_analog_l[i])
 		{
 			event.type = ev_keydown;
-			event.data1 = left_analog_lut[i];
+			event.data1 = *((menuactive)? left_analog_lut[i].menukey : left_analog_lut[i].gamekey);
 		}
-		
+
 		if(!new_input_analog_l[i] && old_input_analog_l[i])
 		{
 			event.type = ev_keyup;
-			event.data1 = left_analog_lut[i];
+			event.data1 = *((menuactive)? left_analog_lut[i].menukey : left_analog_lut[i].gamekey);;
 		}
-		
+
 		if(event.type == ev_keydown || event.type == ev_keyup)
 			D_PostEvent(&event);
-		
+
 		old_input_analog_l[i] = new_input_analog_l[i];
 	}
 }
@@ -1029,9 +965,10 @@ static void process_gamepad_right_analog(void)
 		if (rsx < -analog_deadzone)
 			rsx = rsx + analog_deadzone;
 		event_mouse.type = ev_mouse;
-		event_mouse.data2 = (ANALOG_MOUSE_SPEED * rsx / (ANALOG_RANGE - analog_deadzone)) * analog_turn_speed;
+		event_mouse.data2 = ANALOG_MOUSE_SPEED * rsx / (ANALOG_RANGE - analog_deadzone)
+                         * analog_turn_speed * TICRATE / (float)tic_vars.fps;
 	}
-	
+
 	if (rsy < -analog_deadzone || rsy > analog_deadzone)
 	{
 		if (rsy > analog_deadzone)
@@ -1039,9 +976,10 @@ static void process_gamepad_right_analog(void)
 		if (rsy < -analog_deadzone)
 			rsy = rsy + analog_deadzone;
 		event_mouse.type = ev_mouse;
-		event_mouse.data3 = (ANALOG_MOUSE_SPEED * rsy / (ANALOG_RANGE - analog_deadzone)) * analog_turn_speed;
+		event_mouse.data3 = ANALOG_MOUSE_SPEED * rsy / (ANALOG_RANGE - analog_deadzone)
+                         * analog_turn_speed * TICRATE / (float)tic_vars.fps;
 	}
-	
+
 	if(event_mouse.type == ev_mouse)
 		D_PostEvent(&event_mouse);
 }
@@ -1080,18 +1018,18 @@ void I_StartTic (void)
             for(i = 0; i < 117; i++)
             {
                event_t event = {0};
-               new_input_kb[i] = input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, action_kb_lut[i][0]);
+               new_input_kb[i] = input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, keyboard_lut[i][0]);
 
                if(new_input_kb[i] && !old_input_kb[i])
                {
                   event.type = ev_keydown;
-                  event.data1 = action_kb_lut[i][1];
+                  event.data1 = keyboard_lut[i][1];
                }
 
                if(!new_input_kb[i] && old_input_kb[i])
                {
                   event.type = ev_keyup;
-                  event.data1 = action_kb_lut[i][1];
+                  event.data1 = keyboard_lut[i][1];
                }
 
                if(event.type == ev_keydown || event.type == ev_keyup)
@@ -1147,13 +1085,13 @@ void I_StartTic (void)
          if (new_input_mw[i] && !old_input_mw[i])
          {
             event_mw.type = ev_keydown;
-            event_mw.data1 = mw_lut[i];
+            event_mw.data1 = *((menuactive)? mw_lut[i].menukey : mw_lut[i].gamekey);
          }
 
          if (!new_input_mw[i] && old_input_mw[i])
          {
             event_mw.type = ev_keyup;
-            event_mw.data1 = mw_lut[i];
+            event_mw.data1 = *((menuactive)? mw_lut[i].menukey : mw_lut[i].gamekey);
          }
 
          if (event_mw.type == ev_keydown || event_mw.type == ev_keyup)
@@ -1258,11 +1196,7 @@ unsigned long I_GetRandomTimeSeed(void)
 */
 const char* I_SigString(char* buf, size_t sz, int signum)
 {
-#ifdef HAVE_SNPRINTF
    snprintf(buf,sz,"signal %d",signum);
-#else
-   sprintf(buf,"signal %d",signum);
-#endif
    return buf;
 }
 
@@ -1365,6 +1299,7 @@ char* I_FindFile(const char* wfname, const char* ext)
 void I_Init(void)
 {
    int i;
+
    /* killough 2/21/98: avoid sound initialization if no sound & no music */
    if (!(nomusicparm && nosfxparm))
       I_InitSound();
@@ -1372,9 +1307,7 @@ void I_Init(void)
    for (i = 0; i < MAX_PADS; i++)
       doom_devices[i] = RETRO_DEVICE_JOYPAD;
 
-#ifndef __LIBRETRO__
    R_InitInterpolation();
-#endif
 }
 
 /*
@@ -1403,4 +1336,20 @@ void I_Read(int fd, void* vbuf, size_t sz)
       sz  -= rc;
       buf += rc;
    }
+}
+
+void R_InitInterpolation(void)
+{
+  struct retro_system_av_info info;
+  retro_get_system_av_info(&info);
+  if(tic_vars.fps != info.timing.fps) {
+    // Only update av_info if changed and it's not the first run
+    if(tic_vars.fps)
+        environ_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
+
+    tic_vars.fps = info.timing.fps;
+    tic_vars.frac_step = FRACUNIT * TICRATE / tic_vars.fps;
+    tic_vars.sample_step = info.timing.sample_rate / tic_vars.fps;
+  }
+  tic_vars.frac = FRACUNIT;
 }

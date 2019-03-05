@@ -291,6 +291,7 @@ void M_DrawMessages(void);
 void M_DrawChatStrings(void);
 void M_Compat(int);       // killough 10/98
 void M_ChangeDemoSmoothTurns(void);
+void M_ChangeFramerate(void);
 void M_General(int);      // killough 10/98
 void M_DrawCompat(void);  // killough 10/98
 void M_DrawGeneral(void); // killough 10/98
@@ -2019,7 +2020,7 @@ static void M_DrawInstructions(void)
     case S_FILE:
       M_DrawStringCentered(160, 20, CR_SELECT, "Type/edit filename and Press ENTER");
       break;
-    case S_CHOICE: 
+    case S_CHOICE:
       M_DrawStringCentered(160, 20, CR_SELECT, "Press left or right to choose");
       break;
     case S_RESET:
@@ -2195,7 +2196,7 @@ setup_menu_t keys_settings3[] =  // Key Binding screen strings
   {"BEST"    ,S_KEY       ,m_scrn,KB_X,KB_Y+10*8,{&key_weapontoggle}},
   {"FIRE"    ,S_KEY       ,m_scrn,KB_X,KB_Y+11*8,{&key_fire},&mousebfire},
   {"NEXT"    ,S_KEY       ,m_scrn,KB_X,KB_Y+12*8,{&key_weaponcycleup}},
-  {"PREV"    ,S_KEY       ,m_scrn,KB_X,KB_Y+13*8,{&key_weaponcycledown}}, 
+  {"PREV"    ,S_KEY       ,m_scrn,KB_X,KB_Y+13*8,{&key_weaponcycledown}},
 
   {"<- PREV",S_SKIP|S_PREV,m_null,KB_PREV,KB_Y+20*8, {keys_settings2}},
   {"NEXT ->",S_SKIP|S_NEXT,m_null,KB_NEXT,KB_Y+20*8, {keys_settings4}},
@@ -2783,7 +2784,7 @@ enum {
 #define G_YA3 (G_YA2+5*8)
 #define GF_X 76
 
-static const char *framerates[] = {"35fps", "40fps", "50fps", "60fps"};
+static const char *framerates[] = {"35fps", "40fps", "50fps", "60fps", "70fps", "72fps", "75fps", "100fps", "119fps", "120fps", "140fps", "144fps"};
 static const char *gamma_lvls[] = {"OFF", "Lv. 1", "Lv. 2", "Lv. 3", "Lv. 4"};
 
 setup_menu_t gen_settings1[] = { // General Settings screen1
@@ -2791,8 +2792,8 @@ setup_menu_t gen_settings1[] = { // General Settings screen1
   {"Video"       ,S_SKIP|S_TITLE, m_null, G_X, G_YA - 12},
 
   {"Framerate", S_CHOICE, m_null, G_X,
-  G_YA + general_uncapped*8, {"uncapped_framerate"}, 0, 0, NULL, framerates},
-  
+  G_YA + general_uncapped*8, {"uncapped_framerate"}, 0, 0, M_ChangeFramerate, framerates},
+
   {"Gamma Correction", S_CHOICE, m_null, G_X,
   G_YA + general_gamma*8, {"usegamma"}, 0, 0, NULL, gamma_lvls},
 
@@ -2961,6 +2962,12 @@ void M_ChangeDemoSmoothTurns(void)
     gen_settings2[12].m_flags |= (S_SKIP|S_SELECT);
 
   R_SmoothPlaying_Reset(NULL);
+}
+
+void M_ChangeFramerate(void)
+{
+  R_InitInterpolation();
+  G_ScaleMovementToFramerate();
 }
 
 // Setting up for the General screen. Turn on flags, set pointers,
@@ -4211,12 +4218,6 @@ boolean M_Responder (event_t* ev) {
       // Common processing for some items
 
       if (setup_select) { // changing an entry
-  if (ch == key_menu_escape) // Exit key = no change
-    {
-    M_SelectDone(ptr1);                           // phares 4/17/98
-    setup_gather = FALSE;   // finished gathering keys, if any
-    return TRUE;
-    }
 
   if (ptr1->m_flags & S_YESNO) // yes or no setting?
     {
@@ -4321,7 +4322,7 @@ boolean M_Responder (event_t* ev) {
     if (ch == key_menu_left) {
       if (ptr1->var.def->type == def_int) {
         int value = *ptr1->var.def->location.pi;
-      
+
         value = value - 1;
         if ((ptr1->var.def->minvalue != UL &&
              value < ptr1->var.def->minvalue))
@@ -4349,7 +4350,7 @@ boolean M_Responder (event_t* ev) {
     if (ch == key_menu_right) {
       if (ptr1->var.def->type == def_int) {
         int value = *ptr1->var.def->location.pi;
-      
+
         value = value + 1;
         if ((ptr1->var.def->minvalue != UL &&
              value < ptr1->var.def->minvalue))
@@ -4374,7 +4375,8 @@ boolean M_Responder (event_t* ev) {
         *ptr1->var.def->location.ppsz = ptr1->selectstrings[value];
       }
     }
-    if (ch == key_menu_enter) {
+    if ((ch == key_menu_enter) ||
+       (ch == key_menu_escape) || (ch == key_fire)) {
       // phares 4/14/98:
       // If not in demoplayback, or netgame,
       // and there's a second variable in var2, set that
@@ -4394,6 +4396,13 @@ boolean M_Responder (event_t* ev) {
     }
     return TRUE;
     }
+
+  if(ch == key_menu_escape) // Exit key = no change
+  {
+    M_SelectDone(ptr1);                           // phares 4/17/98
+    setup_gather = FALSE;   // finished gathering keys, if any
+    return TRUE;
+  }
 
       }
 
@@ -5061,7 +5070,7 @@ void M_ClearMenus (void)
   menuactive = mnact_inactive;
   print_warning_about_changes = 0;     // killough 8/15/98
   default_verify = 0;                  // killough 10/98
-  
+
   // Have to call this here to ensure that any changes to the
   // gamma correction level are applied immediately...
   V_SetPalette(0);
@@ -5359,6 +5368,7 @@ void M_Init(void)
   M_InitExtendedHelp(); // init extended help screens // phares 3/30/98
 
   M_ChangeDemoSmoothTurns();
+  M_ChangeFramerate();
 }
 
 //
